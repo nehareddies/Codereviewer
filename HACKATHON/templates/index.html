@@ -1,0 +1,182 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Code Reviewer</title>
+<link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
+</head>
+<body>
+
+<nav class="nav">
+  <a class="brand" href="#top">🔍 Code Reviewer</a>
+  <div class="nav-links">
+    <a href="#upload">Upload</a>
+    {% if result and not result.error %}
+      <a href="#summary">Summary</a>
+      {% if result.issues %}<a href="#findings">Findings</a><a href="#ai">AI fixes</a>{% endif %}
+      <a href="#code">Code</a>
+    {% endif %}
+  </div>
+</nav>
+
+<main id="top">
+  <section class="hero">
+    <h1>Find problems in your Python code, then understand them.</h1>
+    <p>Upload a file and get instant static analysis plus plain-English explanations and fixes from AI.</p>
+    <div class="pills"><span>📝 Docstrings</span><span>🪜 Deep nesting</span><span>🧹 Unused variables</span><span>🛡️ Never runs your code</span></div>
+  </section>
+
+  <section class="card" id="upload">
+    <form method="post" enctype="multipart/form-data" id="form" class="upload">
+      <label class="drop" id="drop">
+        <span class="icon">📂</span>
+        <strong id="drop-title">Drop a .py file here or click to browse</strong>
+        <small id="drop-sub">Max 1 MB. Your file is analyzed, never executed or saved.</small>
+        <input type="file" name="file" id="file" accept=".py" required>
+      </label>
+      <button class="btn" type="submit" id="go">Review code ✨</button>
+    </form>
+  </section>
+
+  {% if result %}
+    {% if result.error %}
+      <div class="card alert error"><strong>Error:</strong> {{ result.error }}</div>
+    {% else %}
+
+      <section class="card" id="summary">
+        <h2>📊 Summary for {{ result.filename }}</h2>
+        <div class="stats">
+          <div class="stat"><b data-count="{{ result.issues|length }}">{{ result.issues|length }}</b>Total issues</div>
+          {% for sev in ["High", "Medium", "Low"] %}
+            <div class="stat {{ sev }}"><b data-count="{{ result.counts.get(sev, 0) }}">{{ result.counts.get(sev, 0) }}</b>{{ sev }}</div>
+          {% endfor %}
+        </div>
+      </section>
+
+      {% if not result.issues %}
+        <div class="card alert ok">🎉 No issues found. Nice work!</div>
+      {% else %}
+        <section class="card" id="findings">
+          <div class="card-head">
+            <h2>🧐 Static analysis findings</h2>
+            <div class="chips" id="chips">
+              <button type="button" class="chip active" data-f="all">All ({{ result.issues|length }})</button>
+              {% for sev in ["High", "Medium", "Low"] %}
+                {% if result.counts.get(sev, 0) %}
+                  <button type="button" class="chip" data-f="{{ sev }}">{{ sev }} ({{ result.counts.get(sev, 0) }})</button>
+                {% endif %}
+              {% endfor %}
+            </div>
+          </div>
+          <div class="table-wrap">
+            <table>
+              <thead><tr><th>Line</th><th>Severity</th><th>Issue</th><th>Description</th></tr></thead>
+              <tbody>
+                {% for i in result.issues %}
+                  <tr data-sev="{{ i.severity }}">
+                    <td><a class="line-link" href="#L{{ i.line }}" title="Jump to this line">{{ i.line }}</a></td>
+                    <td><span class="badge {{ i.severity }}">{{ i.severity }}</span></td>
+                    <td>{{ i.kind }}</td>
+                    <td>{{ i.description }}</td>
+                  </tr>
+                {% endfor %}
+              </tbody>
+            </table>
+          </div>
+          <p class="hint">Tip: click a line number to jump to it in your code.</p>
+        </section>
+
+        {% if result.explanation %}
+          <section class="card ai" id="ai">
+            <h2>🤖 AI explanation &amp; suggested fixes</h2>
+            {% for kind, content in result.explanation %}
+              {% if kind == "code" %}<pre>{{ content }}</pre>{% else %}<p>{{ content }}</p>{% endif %}
+            {% endfor %}
+          </section>
+        {% else %}
+          <section class="card alert warn" id="ai">
+            <strong>⚠️ AI explanation unavailable:</strong> {{ result.ai_error }}
+            Showing static-analysis results only.
+          </section>
+        {% endif %}
+      {% endif %}
+
+      <section class="card" id="code">
+        <div class="card-head">
+          <h2>💻 Your code</h2>
+          <div class="legend">
+            <span class="High"><i></i>High</span><span class="Medium"><i></i>Medium</span><span class="Low"><i></i>Low</span>
+          </div>
+        </div>
+        <div class="code">
+          {% for n, text, sev in result.code_lines %}
+            <div id="L{{ n }}" class="{{ sev or '' }}"><span class="n">{{ n }}</span>{{ text }}</div>
+          {% endfor %}
+        </div>
+      </section>
+
+    {% endif %}
+  {% endif %}
+</main>
+
+<footer>Code Reviewer · static analysis with <code>ast</code> · explanations by Gemini</footer>
+
+<div class="loading" id="loading"><div class="spinner"></div>Reviewing your code…</div>
+<button class="to-top" id="top-btn" type="button" title="Back to top">↑</button>
+
+<script>
+  // Show chosen file name and support drag & drop
+  var file = document.getElementById("file"), drop = document.getElementById("drop");
+  file.addEventListener("change", function () {
+    if (file.files.length) {
+      document.getElementById("drop-title").textContent = "✅ " + file.files[0].name;
+      document.getElementById("drop-sub").textContent = "Ready. Click “Review code”.";
+      drop.classList.add("has-file");
+    }
+  });
+  ["dragenter", "dragover"].forEach(function (e) {
+    drop.addEventListener(e, function () { drop.classList.add("over"); });
+  });
+  ["dragleave", "drop"].forEach(function (e) {
+    drop.addEventListener(e, function () { drop.classList.remove("over"); });
+  });
+
+  // Loading overlay while the review runs
+  document.getElementById("form").addEventListener("submit", function () {
+    document.getElementById("go").disabled = true;
+    document.getElementById("loading").classList.add("show");
+  });
+
+  // Filter findings by severity
+  var chips = document.getElementById("chips");
+  if (chips) {
+    chips.addEventListener("click", function (e) {
+      var chip = e.target.closest(".chip");
+      if (!chip) return;
+      chips.querySelectorAll(".chip").forEach(function (c) { c.classList.remove("active"); });
+      chip.classList.add("active");
+      document.querySelectorAll("tbody tr").forEach(function (row) {
+        row.hidden = chip.dataset.f !== "all" && row.dataset.sev !== chip.dataset.f;
+      });
+    });
+  }
+
+  // Count-up animation for summary numbers
+  document.querySelectorAll("[data-count]").forEach(function (el) {
+    var target = +el.dataset.count, n = 0;
+    if (!target) return;
+    el.textContent = "0";
+    var timer = setInterval(function () {
+      n += 1; el.textContent = n;
+      if (n >= target) clearInterval(timer);
+    }, 700 / target);
+  });
+
+  // Back-to-top button
+  var topBtn = document.getElementById("top-btn");
+  window.addEventListener("scroll", function () { topBtn.classList.toggle("show", window.scrollY > 400); });
+  topBtn.addEventListener("click", function () { window.scrollTo({ top: 0 }); });
+</script>
+</body>
+</html>
